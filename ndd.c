@@ -125,19 +125,6 @@ typedef struct ndmin {
 } ndmin_t;
 
 /* *****************************************************************************
- * Function declarations
- */
-
-int load_config(const char *, ndd_t *);
-int init_network();
-int serve(ndd_t *);
-void close_minors();
-void log_msg(int level, const char *fmt, ...);
-ndmin_t *get_minor(int mn);
-int add_ack(ndmin_t *m, ndpkt_t *p);
-uint32_t get_minor_size(int mn);
-
-/* *****************************************************************************
  * Globals
  */
 
@@ -147,6 +134,53 @@ static ndmin_t *nd_minors[MAX_MINOR];
 /* *****************************************************************************
  * Source code
  */
+
+/*
+ * Log message using the syslogd(8). If we are not a daemon, print it also
+ * to stderr.
+ */
+void
+log_msg(int level, const char *fmt, ...)
+{
+    va_list arg;
+    char log_str[MAX_LOG_LEN];
+
+    if (level > nds.log_level)
+        return;
+
+    va_start(arg, fmt);
+    (void) vsnprintf(log_str, MAX_LOG_LEN, fmt, arg);
+    va_end(arg);
+
+    syslog(LOG_INFO, "%s", log_str);
+    if (!nds.is_daemon) {
+        (void) fprintf(stderr, "%s\n", log_str);
+        (void) fflush(stderr);
+    }
+}
+
+/*
+ * Open RAW IP socket.
+ */
+int
+init_network()
+{
+    int sc;
+    int one = 1;
+    int *val = &one;
+
+    sc = socket(AF_INET, SOCK_RAW, ND_IPPROTO);
+    if (sc == -1) {
+        log_msg(0, "Unable to open socket: %s.", strerror(errno));
+        return (sc);
+    }
+    if (setsockopt(sc, IPPROTO_IP, IP_HDRINCL, val, sizeof (one)) == -1) {
+        log_msg(0, "Unable to set IP_HDRINCL: %s.", strerror(errno));
+        close(sc);
+        return (-1);
+    }
+    return (sc);
+}
 
 /*
  * Return 'sofstate' for given minor.
@@ -292,30 +326,6 @@ usage()
 }
 
 /*
- * Log message using the syslogd(8). If we are not a daemon, print it also
- * to stderr.
- */
-void
-log_msg(int level, const char *fmt, ...)
-{
-    va_list arg;
-    char log_str[MAX_LOG_LEN];
-
-    if (level > nds.log_level)
-        return;
-
-    va_start(arg, fmt);
-    (void) vsnprintf(log_str, MAX_LOG_LEN, fmt, arg);
-    va_end(arg);
-
-    syslog(LOG_INFO, "%s", log_str);
-    if (!nds.is_daemon) {
-        (void) fprintf(stderr, "%s\n", log_str);
-        (void) fflush(stderr);
-    }
-}
-
-/*
  * Handle signals. We currently handle only SIGTERM and SIGINT; we simply
  * exit in both cases.
  */
@@ -439,127 +449,6 @@ cleanup()
     /* Close all minors. */
     close_minors();
     remove_lock();
-}
-
-int
-main(int argc, char **argv)
-{
-    char *conf_file = NULL;
-    int do_daemon = 1;
-    int c;
-
-    /* Initialize the context */
-    nds.is_daemon = 0;
-    nds.exiting = 0;
-    nds.lf_fd = -1;
-    nds.sc_fd = -1;
-    nds.lf = DEFAULT_LOCK_FILE;
-
-    while ((c = getopt(argc, argv, "dc:l:vh")) != -1) {
-        switch (c) {
-        case 'd':   /* debug */
-            do_daemon = 0;
-            break;
-        case 'c':   /* config file */
-            conf_file = optarg;
-            break;
-        case 'l':   /* lock file */
-            nds.lf = optarg;
-            break;
-        case 'v':
-            (void) printf("Version: %s\n", VERSION);
-            exit(0);
-            break;
-        case 'h':
-            usage();
-            break;
-        case '?':
-            if (optopt == 'c') {
-                (void) fprintf(stderr, "Missing configuration"
-                    " file name.\n");
-            } else if (optopt == 'l') {
-                (void) fprintf(stderr, "Missing lock file "
-                    "name.\n");
-            }
-            usage();
-            break;
-        default:
-            abort();
-        }
-    }
-
-    openlog(NULL, LOG_PID, LOG_USER);
-
-    /* Load the config file. */
-    if (load_config(conf_file, &nds) != 0) {
-        (void) fprintf(stderr, "Unable to load configuration.\n");
-        exit(1);
-    }
-
-    /* Try to create the lock file. */
-    if (create_lock(&nds)) {
-        log_msg(0, "Unable to get the lock. Exiting.");
-        close_minors();
-        exit(1);
-    }
-
-    /* Initialize the network. */
-    if ((nds.sc_fd = init_network()) == -1) {
-        log_msg(0, "Unable to initialize network. Exiting.");
-        close_minors();
-        remove_lock();
-        exit(1);
-    }
-
-    if (do_daemon) {
-        if (daemonise()) {
-            log_msg(0, "Unable to deamonize. Exiting.");
-            close_minors();
-            remove_lock();
-            exit(1);
-        }
-        /* Update the lock file with the new PID the child got. */
-        if (create_lock(&nds)) {
-            log_msg(0, "Unable to lock. Exiting.");
-            close_minors();
-            remove_lock();
-            exit(1);
-        }
-    }
-
-    /* We handle SIGTERM and SIGINT only */
-    signal(SIGTERM, signal_handler);
-    signal(SIGINT, signal_handler);
-
-    /* atexit function will remove the lock file. */
-    atexit(cleanup);
-
-    serve(&nds);
-
-    exit(0);
-}
-
-/*
- * Open RAW IP socket.
- */
-int
-init_network()
-{
-    int sc;
-    int one = 1;
-    int *val = &one;
-
-    sc = socket(AF_INET, SOCK_RAW, ND_IPPROTO);
-    if (sc == -1) {
-        log_msg(0, "Unable to open socket: %s.", strerror(errno));
-        return (sc);
-    }
-    if (setsockopt(sc, IPPROTO_IP, IP_HDRINCL, val, sizeof (one)) == -1) {
-        log_msg(0, "Unable to set IP_HDRINCL: %s.", strerror(errno));
-        close(sc);
-        return (-1);
-    }
-    return (sc);
 }
 
 /*
@@ -804,4 +693,102 @@ serve(ndd_t *nds)
 
     free(pkt);
     return (rc);
+}
+
+int
+main(int argc, char **argv)
+{
+    char *conf_file = NULL;
+    int do_daemon = 1;
+    int c;
+
+    /* Initialize the context */
+    nds.is_daemon = 0;
+    nds.exiting = 0;
+    nds.lf_fd = -1;
+    nds.sc_fd = -1;
+    nds.lf = DEFAULT_LOCK_FILE;
+
+    while ((c = getopt(argc, argv, "dc:l:vh")) != -1) {
+        switch (c) {
+        case 'd':   /* debug */
+            do_daemon = 0;
+            break;
+        case 'c':   /* config file */
+            conf_file = optarg;
+            break;
+        case 'l':   /* lock file */
+            nds.lf = optarg;
+            break;
+        case 'v':
+            (void) printf("Version: %s\n", VERSION);
+            exit(0);
+            break;
+        case 'h':
+            usage();
+            break;
+        case '?':
+            if (optopt == 'c') {
+                (void) fprintf(stderr, "Missing configuration"
+                    " file name.\n");
+            } else if (optopt == 'l') {
+                (void) fprintf(stderr, "Missing lock file "
+                    "name.\n");
+            }
+            usage();
+            break;
+        default:
+            abort();
+        }
+    }
+
+    openlog(NULL, LOG_PID, LOG_USER);
+
+    /* Load the config file. */
+    if (load_config(conf_file, &nds) != 0) {
+        (void) fprintf(stderr, "Unable to load configuration.\n");
+        exit(1);
+    }
+
+    /* Try to create the lock file. */
+    if (create_lock(&nds)) {
+        log_msg(0, "Unable to get the lock. Exiting.");
+        close_minors();
+        exit(1);
+    }
+
+    /* Initialize the network. */
+    if ((nds.sc_fd = init_network()) == -1) {
+        log_msg(0, "Unable to initialize network. Exiting.");
+        close_minors();
+        remove_lock();
+        exit(1);
+    }
+
+    if (do_daemon) {
+        if (daemonise()) {
+            log_msg(0, "Unable to deamonize. Exiting.");
+            close_minors();
+            remove_lock();
+            exit(1);
+        }
+        /* Update the lock file with the new PID the child got. */
+        if (create_lock(&nds)) {
+            log_msg(0, "Unable to lock. Exiting.");
+            close_minors();
+            remove_lock();
+            exit(1);
+        }
+    }
+
+    /* We handle SIGTERM and SIGINT only */
+    signal(SIGTERM, signal_handler);
+    signal(SIGINT, signal_handler);
+
+    /* atexit function will remove the lock file. */
+    atexit(cleanup);
+
+    serve(&nds);
+
+    exit(0);
 }
