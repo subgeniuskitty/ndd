@@ -1,2 +1,0 @@
-# ndd
-ND server
