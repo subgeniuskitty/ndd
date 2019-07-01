@@ -9,7 +9,7 @@ CC              = cc
 ####################################################################################################
 # Configuration
 
-CC_FLAGS        = -fPIC -Wall -Wextra -ansi -pedantic -O2
+CC_FLAGS        = -fPIC -Wall -Wextra -std=c99 -pedantic -O2
 NDD_SRC		!= ls *.c
 INI_SRC		!= ls iniparser/*.c
 

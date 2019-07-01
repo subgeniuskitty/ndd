@@ -396,7 +396,7 @@ create_lock(ndd_t *ndd)
 		(void) lseek(ndd->lf_fd, 0, SEEK_SET);
 		log_msg(0, "Updating pid only: %d", ndd->lf_fd);
 	}
-	(void) snprintf(pid_str, sizeof (pid_str), "%ld\n", getpid());
+	(void) snprintf(pid_str, sizeof (pid_str), "%d\n", getpid());
 	pid_len = strlen(pid_str);
 
 	if (write(ndd->lf_fd, pid_str, pid_len) != pid_len) {
@@ -566,7 +566,7 @@ init_network()
  * Verify incoming packet.
  */
 static int
-verify_pkt(ndpkt_t *p, int len)
+verify_pkt(ndpkt_t *p)
 {
 	ndmin_t *m;
 	long blkno = ntohl(p->np_blkno);
@@ -788,7 +788,7 @@ serve(ndd_t *nds)
 		}
 
 		/* Verify just received packet */
-		err = verify_pkt(pkt, pkt_len);
+		err = verify_pkt(pkt);
 
 		/* ND protocol supports only 2 operations: read and write */
 		op = pkt->np_op & ND_OP_CODE;
