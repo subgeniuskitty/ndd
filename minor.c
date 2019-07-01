@@ -16,7 +16,7 @@
 #include <string.h>
 #include <assert.h>
 
-#include "iniparser.h"
+#include "iniparser/iniparser.h"
 
 #include "nd_pkt.h"
 #include "minor.h"
